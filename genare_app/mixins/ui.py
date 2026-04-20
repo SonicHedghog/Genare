@@ -51,7 +51,7 @@ class UIMixin:
         ).pack(side=tk.LEFT, padx=(4, 0))
         tk.Label(
             status_row,
-            text="Voice shortcuts: Ctrl+Shift+V, F8",
+            text="Voice shortcuts: Ctrl+Shift+V/F8 listen, Esc stop speech",
             font=("Segoe UI", 9),
             bg="#f2f4f8",
             fg="#5d6875",
@@ -315,6 +315,22 @@ class UIMixin:
         )
         self.tts_checkbox.pack(side=tk.LEFT, padx=(0, 10))
 
+        self.stop_speaking_btn = tk.Button(
+            control_frame,
+            text="Stop Speaking (Esc)",
+            command=self.on_stop_speaking,
+            bg="#ffeceb",
+            fg="#8a2d2b",
+            activebackground="#ffd9d7",
+            activeforeground="#8a2d2b",
+            relief=tk.FLAT,
+            padx=10,
+            pady=8,
+            font=("Segoe UI", 10),
+            cursor="hand2",
+        )
+        self.stop_speaking_btn.pack(side=tk.LEFT, padx=(0, 10))
+
         self.save_settings_btn = tk.Button(
             control_frame,
             text="Save Settings",
@@ -383,7 +399,7 @@ class UIMixin:
             "System",
             (
                 "Online and ready. Type a message or click 'Voice Input'. "
-                "Voice shortcuts: Ctrl+Shift+V or F8. "
+                "Voice shortcuts: Ctrl+Shift+V or F8 to listen, Esc to stop speaking. "
                 "Use Add File/Paste to attach files. "
                 "Terminal commands are always shown and require approval before execution."
             ),
@@ -391,9 +407,10 @@ class UIMixin:
 
         self.update_config_hint()
 
-        # Keyboard shortcuts for voice input.
+        # Keyboard shortcuts for voice controls.
         self.root.bind_all("<Control-Shift-V>", self.on_voice_shortcut)
         self.root.bind_all("<F8>", self.on_voice_shortcut)
+        self.root.bind_all("<Escape>", self.on_stop_speaking_shortcut)
         self.root.bind_all("<Control-comma>", self.on_audio_shortcut)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.update_context_meter(0)
@@ -514,6 +531,7 @@ class UIMixin:
         read_aloud_var = tk.BooleanVar(value=bool(self.read_output_var.get()))
         voice_quality_var = tk.StringVar(value=self.voice_quality_var.get())
         tts_rate_var = tk.StringVar(value=str(self.tts_rate))
+        tts_voice_var = tk.StringVar(value=str(getattr(self, "tts_voice", "female-natural")))
         tts_backend_var = tk.StringVar(value=self.tts_backend)
 
         tk.Label(
@@ -546,6 +564,11 @@ class UIMixin:
         tk.Label(rate_row, text="TTS rate", bg="#f2f4f8", fg="#37414e", font=("Segoe UI", 10)).pack(side=tk.LEFT)
         tk.Entry(rate_row, textvariable=tts_rate_var, width=8, font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=(8, 0))
 
+        voice_row = tk.Frame(dialog, bg="#f2f4f8")
+        voice_row.pack(fill=tk.X, padx=14, pady=(2, 8))
+        tk.Label(voice_row, text="TTS voice", bg="#f2f4f8", fg="#37414e", font=("Segoe UI", 10)).pack(side=tk.LEFT)
+        tk.OptionMenu(voice_row, tts_voice_var, "female-natural", "female", "male").pack(side=tk.LEFT, padx=(8, 0))
+
         backend_row = tk.Frame(dialog, bg="#f2f4f8")
         backend_row.pack(fill=tk.X, padx=14, pady=(2, 8))
         tk.Label(backend_row, text="TTS backend", bg="#f2f4f8", fg="#37414e", font=("Segoe UI", 10)).pack(side=tk.LEFT)
@@ -562,6 +585,7 @@ class UIMixin:
                     self.voice_quality_var.set(new_quality)
                     self.apply_voice_profile(new_quality, announce=False)
                 self.tts_rate = max(80, min(320, int(tts_rate_var.get().strip() or "170")))
+                self.tts_voice = tts_voice_var.get().strip().lower() or "female-natural"
                 self.tts_backend = (tts_backend_var.get().strip() or self.tts_backend).lower()
                 self.save_settings()
                 self.update_chat("System", "Audio settings updated.")
@@ -596,8 +620,9 @@ class UIMixin:
 
     def on_close(self):
         self.cancel_work_check_notifications()
-        self.tts_shutdown.set()
-        self.tts_queue.put(None)
+        self.stop_tts_playback(shutdown=True)
+        if hasattr(self, "tts_worker") and self.tts_worker.is_alive():
+            self.tts_worker.join(timeout=1.0)
         self.save_settings()
         self.root.destroy()
 
@@ -625,6 +650,14 @@ class UIMixin:
 
     def on_read_output_toggle(self):
         self.save_settings()
+
+    def on_stop_speaking(self):
+        self.stop_tts_playback(shutdown=False)
+        self.update_chat("System", "Speech stopped.")
+
+    def on_stop_speaking_shortcut(self, event):
+        self.on_stop_speaking()
+        return "break"
 
     def on_voice_shortcut(self, event):
         self.start_listening_thread()

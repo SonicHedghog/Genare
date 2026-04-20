@@ -52,7 +52,15 @@ class GenareApp(UIMixin, ConversationMixin, TerminalMixin, AudioMixin, AIMixin, 
         # Audio Setup
         self.pyttsx3 = pyttsx3
         self.sr = sr
-        self.tts_rate = int(self.get_env_or_setting("GENARE_TTS_RATE", "tts_rate", 170, int))
+        self.tts_rate = int(self.get_env_or_setting("GENARE_TTS_RATE", "tts_rate", 155, int))
+        self.tts_voice = str(
+            self.get_env_or_setting(
+                "GENARE_TTS_VOICE",
+                "tts_voice",
+                "female-natural",
+                str,
+            )
+        )
         self.tts_backend = str(
             self.get_env_or_setting(
                 "GENARE_TTS_BACKEND",
@@ -160,6 +168,7 @@ class GenareApp(UIMixin, ConversationMixin, TerminalMixin, AudioMixin, AIMixin, 
             "max_path_preview_lines": self.max_path_preview_lines,
             "max_image_attachment_bytes": self.max_image_attachment_bytes,
             "tts_rate": self.tts_rate,
+            "tts_voice": self.tts_voice,
             "tts_backend": self.tts_backend,
             "work_check_interval_minutes": self.work_check_interval_minutes,
         }

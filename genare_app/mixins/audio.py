@@ -1,25 +1,103 @@
 import os
+import queue
 import re
 import subprocess
 import threading
 
 
 class AudioMixin:
+    def ensure_tts_runtime_state(self):
+        if not hasattr(self, "tts_state_lock"):
+            self.tts_state_lock = threading.Lock()
+        if not hasattr(self, "tts_process"):
+            self.tts_process = None
+        if not hasattr(self, "tts_engine"):
+            self.tts_engine = None
+
+    def stop_tts_playback(self, shutdown=False):
+        self.ensure_tts_runtime_state()
+        if shutdown:
+            self.tts_shutdown.set()
+
+        try:
+            while True:
+                self.tts_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+        # Unblock worker loop if it is waiting on the queue.
+        if shutdown:
+            self.tts_queue.put(None)
+
+        with self.tts_state_lock:
+            process = self.tts_process
+            engine = self.tts_engine
+
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=0.5)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+
+        if engine is not None:
+            try:
+                engine.stop()
+            except Exception:
+                pass
+
+    def resolve_tts_voice_preference(self):
+        return str(getattr(self, "tts_voice", "female-natural") or "female-natural").strip().lower()
+
+    def choose_pyttsx3_voice_id(self, engine):
+        preference = self.resolve_tts_voice_preference()
+        voices = list(engine.getProperty("voices") or [])
+        if not voices:
+            return None
+
+        # Honor explicit voice names before applying profile matching.
+        if preference not in ("female", "female-natural", "male"):
+            for voice in voices:
+                name = str(getattr(voice, "name", "")).lower()
+                if preference in name:
+                    return getattr(voice, "id", None)
+
+        female_hints = ("zira", "aria", "jenny", "susan", "hazel", "sara", "female", "woman", "girl")
+        male_hints = ("david", "mark", "guy", "male", "man", "boy")
+
+        if preference in ("female", "female-natural"):
+            for voice in voices:
+                name = str(getattr(voice, "name", "")).lower()
+                if any(hint in name for hint in female_hints):
+                    return getattr(voice, "id", None)
+
+        if preference == "male":
+            for voice in voices:
+                name = str(getattr(voice, "name", "")).lower()
+                if any(hint in name for hint in male_hints):
+                    return getattr(voice, "id", None)
+
+        return getattr(voices[0], "id", None)
+
     def speak_async(self, text):
         text = (text or "").strip()
-        if not text:
+        if not text or self.tts_shutdown.is_set():
             return
         self.tts_queue.put(text)
 
     def tts_worker_loop(self):
         while not self.tts_shutdown.is_set():
             item = self.tts_queue.get()
-            if item is None:
+            if item is None or self.tts_shutdown.is_set():
                 break
             try:
                 self.speak_with_backend(str(item))
             except Exception as e:
-                self.update_chat("System", f"TTS error: {e}")
+                if not self.tts_shutdown.is_set():
+                    self.update_chat("System", f"TTS error: {e}")
 
     def speak_with_backend(self, text):
         if self.tts_backend == "windows-sapi" and os.name == "nt":
@@ -28,35 +106,83 @@ class AudioMixin:
         self.speak_with_pyttsx3(text)
 
     def speak_with_pyttsx3(self, text):
+        if self.tts_shutdown.is_set():
+            return
+        self.ensure_tts_runtime_state()
         engine = self.pyttsx3.init()
         try:
+            with self.tts_state_lock:
+                self.tts_engine = engine
+            voice_id = self.choose_pyttsx3_voice_id(engine)
+            if voice_id:
+                engine.setProperty("voice", voice_id)
             engine.setProperty('rate', self.tts_rate)
             engine.say(text)
             engine.runAndWait()
         finally:
+            with self.tts_state_lock:
+                if self.tts_engine is engine:
+                    self.tts_engine = None
             try:
                 engine.stop()
             except Exception:
                 pass
 
     def speak_with_windows_sapi(self, text):
+        if self.tts_shutdown.is_set():
+            return
+        self.ensure_tts_runtime_state()
         escaped = text.replace("'", "''")
+        voice_preference = self.resolve_tts_voice_preference().replace("'", "''")
         # Map app rate roughly from 80-320 to SAPI -10..10
         sapi_rate = int(round((self.tts_rate - 170) / 12))
         sapi_rate = max(-10, min(10, sapi_rate))
         script = (
             "Add-Type -AssemblyName System.Speech; "
             "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+            "$voices = @($s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }); "
+            f"$pref = '{voice_preference}'; "
+            "$selected = $null; "
+            "if ($pref -and $pref -notin @('female', 'female-natural', 'male')) { "
+            "  $selected = $voices | Where-Object { $_ -match [Regex]::Escape($pref) } | Select-Object -First 1; "
+            "} "
+            "if (-not $selected -and $pref -in @('female', 'female-natural')) { "
+            "  $selected = $voices | Where-Object { $_ -match '(?i)zira|aria|jenny|susan|hazel|sara|female|woman|girl' } | Select-Object -First 1; "
+            "} "
+            "if (-not $selected -and $pref -eq 'male') { "
+            "  $selected = $voices | Where-Object { $_ -match '(?i)david|mark|male|man|boy' } | Select-Object -First 1; "
+            "} "
+            "if (-not $selected) { $selected = $voices | Select-Object -First 1; } "
+            "if ($selected) { $s.SelectVoice($selected); } "
             f"$s.Rate = {sapi_rate}; "
             f"$s.Speak('{escaped}');"
         )
-        completed = subprocess.run(
+        process = subprocess.Popen(
             ["powershell", "-NoProfile", "-Command", script],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=max(30, self.terminal_timeout_seconds),
         )
-        if completed.returncode != 0:
+        with self.tts_state_lock:
+            self.tts_process = process
+
+        try:
+            process.communicate(timeout=max(30, self.terminal_timeout_seconds))
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            process.communicate()
+        finally:
+            with self.tts_state_lock:
+                if self.tts_process is process:
+                    self.tts_process = None
+
+        if self.tts_shutdown.is_set():
+            return
+
+        if process.returncode != 0:
             # Fallback to pyttsx3 if SAPI invocation fails.
             self.speak_with_pyttsx3(text)
 

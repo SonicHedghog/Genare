@@ -21,7 +21,8 @@ def default_settings() -> dict[str, Any]:
         "max_attachment_text_bytes": 120000,
         "max_path_preview_lines": 200,
         "max_image_attachment_bytes": 8000000,
-        "tts_rate": 170,
+        "tts_rate": 155,
+        "tts_voice": "female-natural",
         "tts_backend": "windows-sapi" if os.name == "nt" else "pyttsx3",
         "work_check_interval_minutes": 0,
     }
