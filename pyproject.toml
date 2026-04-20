@@ -1,0 +1,14 @@
+[project]
+name = "genare"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=2.32.0",
+    "openai-whisper>=20250625",
+    "pyaudio>=0.2.14",
+    "pyttsx3>=2.99",
+    "soundfile>=0.13.1",
+    "speechrecognition>=3.16.0",
+]
