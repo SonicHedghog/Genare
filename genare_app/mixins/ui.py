@@ -428,6 +428,7 @@ class UIMixin:
             ("Speech Hints", "speech_hints", self.speech_hints),
             ("Terminal Working Dir", "terminal_workdir", self.terminal_workdir),
             ("Terminal Timeout (sec)", "terminal_timeout_seconds", str(self.terminal_timeout_seconds)),
+            ("Work Check Reminder (minutes, 0=off)", "work_check_interval_minutes", str(self.work_check_interval_minutes)),
             ("Max Context Messages", "max_context_messages", str(self.max_context_messages)),
             ("Max Context Tokens", "max_context_tokens", str(self.max_context_tokens)),
             ("Silence Stop Seconds", "silence_stop_seconds", str(self.silence_stop_seconds)),
@@ -459,12 +460,14 @@ class UIMixin:
                 self.speech_hints = entries["speech_hints"].get().strip() or self.speech_hints
                 self.terminal_workdir = entries["terminal_workdir"].get().strip() or os.getcwd()
                 self.terminal_timeout_seconds = max(5, int(entries["terminal_timeout_seconds"].get().strip() or "120"))
+                work_check_interval_minutes = max(0, int(entries["work_check_interval_minutes"].get().strip() or "0"))
                 self.max_context_messages = max(4, int(entries["max_context_messages"].get().strip() or "18"))
                 self.max_context_tokens = max(1000, int(entries["max_context_tokens"].get().strip() or "12000"))
                 self.silence_stop_seconds = max(0.3, float(entries["silence_stop_seconds"].get().strip() or "0.9"))
                 self.max_attachment_text_bytes = max(2000, int(entries["max_attachment_text_bytes"].get().strip() or "120000"))
                 self.max_path_preview_lines = max(20, int(entries["max_path_preview_lines"].get().strip() or "200"))
                 self.max_image_attachment_bytes = max(100000, int(entries["max_image_attachment_bytes"].get().strip() or "8000000"))
+                self.set_work_check_interval_minutes(work_check_interval_minutes, announce=True)
                 self.recognizer.pause_threshold = self.silence_stop_seconds
                 self.save_settings()
                 self.update_context_meter(self.last_context_tokens)
@@ -592,6 +595,7 @@ class UIMixin:
         ).pack(side=tk.RIGHT)
 
     def on_close(self):
+        self.cancel_work_check_notifications()
         self.tts_shutdown.set()
         self.tts_queue.put(None)
         self.save_settings()

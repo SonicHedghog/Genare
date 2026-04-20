@@ -13,12 +13,13 @@ from openai import OpenAI
 from .mixins.ai import AIMixin
 from .mixins.audio import AudioMixin
 from .mixins.conversation import ConversationMixin
+from .mixins.notifications import NotificationMixin
 from .mixins.terminal import TerminalMixin
 from .mixins.ui import UIMixin
 from .settings import get_env_or_setting, load_settings
 
 
-class GenareApp(UIMixin, ConversationMixin, TerminalMixin, AudioMixin, AIMixin):
+class GenareApp(UIMixin, ConversationMixin, TerminalMixin, AudioMixin, AIMixin, NotificationMixin):
     def __init__(self, root, base_url, api_key="sk-no-key-needed", model="gpt-4o-mini"):
         self.root = root
         self.tk = tk
@@ -124,9 +125,18 @@ class GenareApp(UIMixin, ConversationMixin, TerminalMixin, AudioMixin, AIMixin):
         self.max_attachment_text_bytes = int(self.get_env_or_setting("GENARE_MAX_ATTACHMENT_TEXT_BYTES", "max_attachment_text_bytes", 120000, int))
         self.max_path_preview_lines = int(self.get_env_or_setting("GENARE_MAX_PATH_PREVIEW_LINES", "max_path_preview_lines", 200, int))
         self.max_image_attachment_bytes = int(self.get_env_or_setting("GENARE_MAX_IMAGE_ATTACHMENT_BYTES", "max_image_attachment_bytes", 8_000_000, int))
+        self.work_check_interval_minutes = int(
+            self.get_env_or_setting(
+                "GENARE_WORK_CHECK_INTERVAL_MINUTES",
+                "work_check_interval_minutes",
+                0,
+                int,
+            )
+        )
         self.last_context_tokens = 0
 
         self.build_ui()
+        self.initialize_work_check_notifications()
 
     def get_env_or_setting(self, env_name, setting_key, default, caster):
         return get_env_or_setting(self.settings, env_name, setting_key, default, caster)
@@ -151,6 +161,7 @@ class GenareApp(UIMixin, ConversationMixin, TerminalMixin, AudioMixin, AIMixin):
             "max_image_attachment_bytes": self.max_image_attachment_bytes,
             "tts_rate": self.tts_rate,
             "tts_backend": self.tts_backend,
+            "work_check_interval_minutes": self.work_check_interval_minutes,
         }
 
     def save_settings(self):

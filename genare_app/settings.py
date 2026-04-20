@@ -23,6 +23,7 @@ def default_settings() -> dict[str, Any]:
         "max_image_attachment_bytes": 8000000,
         "tts_rate": 170,
         "tts_backend": "windows-sapi" if os.name == "nt" else "pyttsx3",
+        "work_check_interval_minutes": 0,
     }
 
 
